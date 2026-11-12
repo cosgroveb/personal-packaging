@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/../.."
+version=0.4.3-1
+tag=live-serve/v$version
+remote=$(git remote get-url origin)
+case "$remote" in git@github.com:cosgroveb/personal-packaging.git|https://github.com/cosgroveb/personal-packaging.git|https://github.com/cosgroveb/personal-packaging) ;; *) echo "unexpected origin: $remote" >&2; exit 1;; esac
+push_urls=$(git remote get-url --push --all origin)
+[ -n "$push_urls" ] || { echo 'origin has no push URL' >&2; exit 1; }
+printf '%s\n' "$push_urls" | while IFS= read -r push_url; do
+  case "$push_url" in
+    git@github.com:cosgroveb/personal-packaging.git|https://github.com/cosgroveb/personal-packaging.git|https://github.com/cosgroveb/personal-packaging) ;;
+    *) echo "unexpected push URL: $push_url" >&2; exit 1;;
+  esac
+done
+status=$(git status --porcelain)
+[ -z "$status" ] || { echo 'worktree is not clean' >&2; exit 1; }
+default=$(gh api repos/cosgroveb/personal-packaging --jq .default_branch)
+[ "$(git branch --show-current)" = "$default" ] || { echo 'not on default branch' >&2; exit 1; }
+git fetch origin "$default" --tags
+[ "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)" ] || { echo 'default branch differs from origin' >&2; exit 1; }
+remote_tag=$(git ls-remote --tags origin "refs/tags/$tag")
+if git rev-parse -q --verify "refs/tags/$tag" >/dev/null || [ -n "$remote_tag" ]; then echo "tag exists: $tag" >&2; exit 1; fi
+live-serve/scripts/check-release "$tag"
+make -C live-serve test
+live-serve/scripts/validate-artifacts live-serve/dist
+status=$(git status --porcelain)
+[ -z "$status" ] || { echo 'worktree changed during verification' >&2; exit 1; }
+live-serve/scripts/check-release "$tag"
+git tag -a "$tag" -m "$tag"
+git push origin "refs/tags/$tag:refs/tags/$tag"
+printf 'Pushed %s. Check https://github.com/cosgroveb/personal-packaging/actions/workflows/live-serve.yml\n' "$tag"

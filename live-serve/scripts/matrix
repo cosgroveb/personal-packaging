@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH='' cd -- "$(dirname "$0")/../.." && pwd)
+out="$root/live-serve/dist"
+mkdir -p "$out"
+for suite in bookworm trixie sid noble; do
+  case "$suite" in noble) image=ubuntu:noble;; *) image=debian:$suite;; esac
+  for arch in amd64 arm64; do
+    echo "Testing $suite $arch"
+    docker run --init --rm --platform "linux/$arch" -v "$root:/work:ro" -v "$out:/out" "$image" /work/live-serve/scripts/container-test "$suite" "$arch"
+  done
+done
+"$root/live-serve/scripts/migration-test"
+"$root/live-serve/scripts/validate-artifacts" "$out"

@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+tag=${1:?tag required}
+[ "$tag" = live-serve/v0.4.3-1 ] || { echo "tag does not match package: $tag" >&2; exit 1; }
+# Check published releases immediately before publication, under the package concurrency lock.
+releases=$(gh release list --repo cosgroveb/personal-packaging --limit 1000 --json tagName --jq '.[].tagName')
+printf '%s\n' "$releases" | while IFS= read -r existing; do
+  case "$existing" in
+    live-serve/v*)
+      other=${existing#live-serve/v}
+      compare() {
+        if command -v dpkg >/dev/null 2>&1; then dpkg "$@"; else docker run --init --rm debian:bookworm dpkg "$@"; fi
+      }
+      if ! compare --validate-version "$other"; then echo "invalid release version: $existing" >&2; exit 1; fi
+      if compare --compare-versions "$other" ge 0.4.3-1; then
+        echo "existing release is at least as new: $existing" >&2
+        exit 1
+      fi;;
+  esac
+done

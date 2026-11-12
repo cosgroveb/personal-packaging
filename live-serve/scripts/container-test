@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+suite=$1
+arch=$2
+apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates python3
+cd /work/live-serve
+./scripts/build "$suite" "$arch" /out
+pkg=/out/live-serve_0.4.3-1_${suite}_${arch}.deb
+[ "$(dpkg-deb -f "$pkg" Architecture)" = "$arch" ]
+[ "$(dpkg-deb -f "$pkg" Version)" = 0.4.3-1 ]
+dpkg -i "$pkg"
+live-serve --version | grep -F 0.4.3
+python3 scripts/runtime-test.py
+(cd /out && sha256sum "$(basename "$pkg")" > "$(basename "$pkg").sha256")
+dpkg --remove live-serve

@@ -1,0 +1,57 @@
+#!/bin/sh
+set -eu
+suite=${1:-}
+arch=${2:-}
+out=${3:-dist}
+case "$suite" in bookworm|trixie|sid|noble) ;; *) echo "unsupported suite: $suite" >&2; exit 1;; esac
+case "$arch" in
+ amd64) target=x86_64; sha=0872effd0f71cf77f6eaf9588a2c053a8000d980985cb2c71697f467ee06fe54;;
+ arm64) target=aarch64; sha=5252fb41d33bad4c5d0441ab40dd9b1fd803748cd8ca569170c09953af3b099a;;
+ *) echo "unsupported architecture: $arch" >&2; exit 1;;
+esac
+version=0.4.3
+revision=1
+name=live-serve-v${version}-${target}-unknown-linux-musl
+url=https://github.com/NguyenTruong354/live-serve/releases/download/v${version}/${name}.tar.gz
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+curl -fLsS "$url" -o "$work/archive.tar.gz"
+printf '%s  %s\n' "$sha" "$work/archive.tar.gz" | sha256sum -c -
+# Extract only the expected regular files, rejecting links and unexpected paths.
+python3 - "$work/archive.tar.gz" "$work" "$name" <<'PY'
+import os, sys, tarfile
+archive, dest, name = sys.argv[1:]
+expected = {f'{name}/live-serve', f'{name}/LICENSE', f'{name}/README.md'}
+with tarfile.open(archive, 'r:gz') as tar:
+    members = tar.getmembers()
+    files = [m for m in members if m.isfile()]
+    if {m.name for m in files} != expected or len(files) != len(expected) or any(not (m.isfile() or (m.isdir() and m.name.rstrip('/') == name)) for m in members):
+        raise SystemExit('unexpected archive contents')
+    for m in files:
+        with tar.extractfile(m) as source, open(os.path.join(dest, os.path.basename(m.name)), 'wb') as target:
+            target.write(source.read())
+PY
+mkdir -p "$work/pkg/DEBIAN" "$work/pkg/usr/bin" "$work/pkg/usr/share/doc/live-serve"
+install -m 755 "$work/live-serve" "$work/pkg/usr/bin/live-serve"
+install -m 644 "$work/LICENSE" "$work/pkg/usr/share/doc/live-serve/copyright"
+cat > "$work/pkg/DEBIAN/control" <<CONTROL
+Package: live-serve
+Version: ${version}-${revision}
+Section: web
+Priority: optional
+Architecture: ${arch}
+Maintainer: Brian Cosgrove <cosgroveb@users.noreply.github.com>
+Homepage: https://github.com/NguyenTruong354/live-serve
+Description: static development server with live reload
+ A small static web server that reloads pages when files change.
+CONTROL
+cat > "$work/changelog" <<CHANGELOG
+live-serve (${version}-${revision}) unstable; urgency=medium
+
+  * Repackage upstream release.
+
+ -- Brian Cosgrove <cosgroveb@users.noreply.github.com>  Tue, 20 Oct 2026 00:00:00 +0000
+CHANGELOG
+gzip -n -9 -c "$work/changelog" > "$work/pkg/usr/share/doc/live-serve/changelog.Debian.gz"
+mkdir -p "$out"
+dpkg-deb --build --root-owner-group "$work/pkg" "$out/live-serve_${version}-${revision}_${suite}_${arch}.deb"

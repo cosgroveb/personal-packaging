@@ -1,0 +1,63 @@
+name: live-serve
+on:
+  push:
+    branches: [main]
+    tags: ['live-serve/v*']
+  pull_request:
+    paths: ['live-serve/**', '.github/workflows/live-serve.yml']
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 live-serve/tests/test_regressions.py
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [bookworm, trixie, sid, noble]
+        arch: [amd64, arm64]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install and exercise package in target container
+        env:
+          SUITE: ${{ matrix.suite }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p live-serve/dist
+          if [ "$SUITE" = noble ]; then image=ubuntu:noble; else image=debian:$SUITE; fi
+          docker run --init --rm --platform "linux/$ARCH" -v "$PWD:/work:ro" -v "$PWD/live-serve/dist:/out" "$image" /work/live-serve/scripts/container-test "$SUITE" "$ARCH"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: live-serve-${{ matrix.suite }}-${{ matrix.arch }}
+          path: |
+            live-serve/dist/*.deb
+            live-serve/dist/*.sha256
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/live-serve/v')
+    needs: [build, checks]
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: live-serve-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: live-serve-*
+          path: artifacts
+          merge-multiple: true
+      - name: Validate and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          live-serve/scripts/validate-artifacts artifacts
+          live-serve/scripts/check-release "$TAG"
+          gh release create "$TAG" artifacts/*.deb artifacts/SHA256SUMS --repo cosgroveb/personal-packaging --title "$TAG" --latest=false --verify-tag

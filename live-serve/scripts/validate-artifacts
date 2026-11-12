@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+dir=${1:?artifact directory required}
+if ! command -v dpkg-deb >/dev/null 2>&1 || ! command -v sha256sum >/dev/null 2>&1; then
+  here=$(CDPATH='' cd -- "$(dirname "$0")" && pwd)
+  dir=$(CDPATH='' cd -- "$dir" && pwd)
+  exec docker run --init --rm -v "$here:/scripts:ro" -v "$dir:/artifacts" debian:bookworm /scripts/validate-artifacts /artifacts
+fi
+set --
+for suite in bookworm trixie sid noble; do
+  for arch in amd64 arm64; do
+    file="live-serve_0.4.3-1_${suite}_${arch}.deb"
+    test -f "$dir/$file"
+    test -f "$dir/$file.sha256"
+    (cd "$dir" && sha256sum "$file" > "$file.actual")
+    if ! cmp -s "$dir/$file.actual" "$dir/$file.sha256"; then
+      rm "$dir/$file.actual"
+      echo "checksum mismatch: $file" >&2
+      exit 1
+    fi
+    rm "$dir/$file.actual"
+    test "$(dpkg-deb -f "$dir/$file" Package)" = live-serve
+    test "$(dpkg-deb -f "$dir/$file" Version)" = 0.4.3-1
+    test "$(dpkg-deb -f "$dir/$file" Architecture)" = "$arch"
+    set -- "$@" "$file"
+  done
+done
+count=$(find "$dir" -maxdepth 1 -name '*.deb' -type f | wc -l)
+test "$count" -eq 8
+(cd "$dir" && sha256sum "$@" > SHA256SUMS && sha256sum -c SHA256SUMS)

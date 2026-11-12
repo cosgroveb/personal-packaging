@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH='' cd -- "$(dirname "$0")/../.." && pwd)
+for arch in amd64 arm64; do
+  docker run --init --rm --platform "linux/$arch" -v "$root/live-serve/dist:/packages:ro" debian:trixie sh -ec '
+    dpkg --compare-versions 0.4.3-1 lt 0.4.3-2
+    dpkg --compare-versions 0.4.3-1 lt 0.4.4-1
+    for suite in bookworm trixie sid noble; do
+      dpkg -i "/packages/live-serve_0.4.3-1_${suite}_'"$arch"'.deb"
+      test "$(dpkg-query -W -f="\${Version}" live-serve)" = 0.4.3-1
+    done
+    dpkg-deb -R "/packages/live-serve_0.4.3-1_sid_'"$arch"'.deb" /tmp/pkg
+    sed -i "s/Version: 0.4.3-1/Version: 0.4.3-2/" /tmp/pkg/DEBIAN/control
+    dpkg-deb --build /tmp/pkg /tmp/upgrade.deb
+    dpkg -i /tmp/upgrade.deb
+    test "$(dpkg-query -W -f="\${Version}" live-serve)" = 0.4.3-2
+    dpkg --remove live-serve
+  '
+done
